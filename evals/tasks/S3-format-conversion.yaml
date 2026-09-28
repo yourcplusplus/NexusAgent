@@ -1,0 +1,48 @@
+# S3 —— 简单:格式转换
+id: S3-format-conversion
+tier: simple
+requires_network: false
+timeout_seconds: 300
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  把 sales.csv 转换成 sales.json:一个对象数组,每个对象含 product(字符串)、
+  quantity(整数)、price(浮点数)三个键,顺序和数据与 CSV 一一对应。
+
+setup:
+  sales.csv: |
+    product,quantity,price
+    apple,10,1.5
+    banana,25,0.75
+    cherry,8,3.2
+    date,40,2.1
+    elderberry,12,4.0
+
+success_criteria:
+  - type: file_exists
+    path: sales.json
+  - type: command_ok
+    command: >-
+      {python} -c "import json; d=json.load(open('sales.json', encoding='utf-8'));
+      assert isinstance(d, list) and len(d) == 5, 'need 5 rows';
+      assert all(set(x) == {'product', 'quantity', 'price'} for x in d), 'bad keys';
+      assert [x['product'] for x in d] == ['apple', 'banana', 'cherry', 'date', 'elderberry'], 'order/data mismatch';
+      assert d[0]['quantity'] == 10 and d[3]['quantity'] == 40 and d[4]['quantity'] == 12, 'quantity values mismatch';
+      assert all(isinstance(x['quantity'], int) for x in d), 'quantity must be int';
+      assert all(isinstance(x['price'], float) for x in d), 'price must be float';
+      print('sales.json ok')"
+
+judge_hints:
+  - "5 行数据必须与 CSV 一一对应;quantity 为整数、price 为浮点数"
+
+reference:
+  sales.json: |
+    [
+      {"product": "apple", "quantity": 10, "price": 1.5},
+      {"product": "banana", "quantity": 25, "price": 0.75},
+      {"product": "cherry", "quantity": 8, "price": 3.2},
+      {"product": "date", "quantity": 40, "price": 2.1},
+      {"product": "elderberry", "quantity": 12, "price": 4.0}
+    ]

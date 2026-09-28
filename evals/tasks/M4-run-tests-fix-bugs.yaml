@@ -1,0 +1,91 @@
+# M4 —— 中等:跑测试 + 修逻辑缺陷
+# 设计说明(与讨论稿的偏差):原稿"2 个 bug / 2 个测试失败"会退化成单步修复,
+# 改为 3 个实现缺陷、5 个测试初始全失败,保持"跑测试 → 修复 → 再跑"的循环压力。
+id: M4-run-tests-fix-bugs
+tier: medium
+requires_network: false
+timeout_seconds: 600
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  运行 geo 包的测试,修复 geo/shapes.py 中的实现缺陷,直到全部测试通过。
+  只允许修改 geo/shapes.py。
+
+setup:
+  geo/__init__.py: ""
+  geo/shapes.py: |
+    """Geometry helpers."""
+    import math
+
+
+    def rectangle_area(width, height):
+        """Area of a rectangle."""
+        return 2 * (width + height)
+
+
+    def triangle_area(base, height):
+        """Area of a triangle."""
+        return base * height
+
+
+    def circle_area(radius):
+        """Area of a circle."""
+        d = radius * 2
+        return d * d
+  test_geo.py: |
+    import math
+
+    from geo.shapes import circle_area, rectangle_area, triangle_area
+
+
+    def test_rectangle_area():
+        assert rectangle_area(3, 4) == 12
+
+
+    def test_rectangle_area_square():
+        assert rectangle_area(5, 5) == 25
+
+
+    def test_triangle_area():
+        assert triangle_area(6, 4) == 12.0
+
+
+    def test_circle_area_unit_radius():
+        assert math.isclose(circle_area(1), math.pi)
+
+
+    def test_circle_area_radius_three():
+        assert math.isclose(circle_area(3), math.pi * 9, rel_tol=1e-9)
+
+success_criteria:
+  - type: command_ok
+    command: "{python} -m pytest test_geo.py -q"
+  - type: file_unchanged
+    path: test_geo.py
+  - type: file_unchanged
+    path: geo/__init__.py
+
+judge_hints:
+  - "三个函数各有一处实现缺陷:矩形面积(误用周长式)、三角形面积(漏了除 2)、圆面积(直径平方而非 π r²);只许改 shapes.py"
+
+reference:
+  geo/shapes.py: |
+    """Geometry helpers."""
+    import math
+
+
+    def rectangle_area(width, height):
+        """Area of a rectangle."""
+        return width * height
+
+
+    def triangle_area(base, height):
+        """Area of a triangle."""
+        return base * height / 2
+
+
+    def circle_area(radius):
+        """Area of a circle."""
+        return math.pi * radius ** 2

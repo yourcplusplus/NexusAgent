@@ -1,0 +1,175 @@
+# L3 —— 长链路:验收脚本驱动的 CLI 构建(写代码 + 跑验收 + 迭代修复)
+id: L3-cli-acceptance
+tier: long
+requires_network: false
+timeout_seconds: 900
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  实现 notes.py 命令行记事工具:
+  - add 子命令接收一条文本,单独一行输出一个数字 id;
+  - list 子命令逐行列出全部记录;
+  - done 子命令接收 id,把对应记录标记为已完成(不是删除:完成后 list 里
+    仍要能看到它,并且能看出已完成,例如带 done 或 [x] 字样)。
+  数据保存在 notes.json。让 acceptance.py 全部通过。
+  不要修改 acceptance.py。
+
+setup:
+  acceptance.py: |
+    """Acceptance checks for the notes.py CLI. Exits 0 only when every check passes."""
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    WORKDIR = Path(__file__).resolve().parent
+    NOTES_FILE = WORKDIR / "notes.json"
+    failures = []
+
+
+    def run_cli(*args):
+        return subprocess.run(
+            [sys.executable, "notes.py", *args],
+            cwd=WORKDIR,
+            capture_output=True,
+            text=True,
+        )
+
+
+    def check(name, condition, detail=""):
+        if condition:
+            print(f"PASS {name}")
+        else:
+            print(f"FAIL {name} {detail}".rstrip())
+            failures.append(name)
+
+
+    def numeric_id(stdout):
+        for line in stdout.strip().splitlines():
+            token = line.strip()
+            if token.isdigit():
+                return token
+        return ""
+
+
+    def reset():
+        if NOTES_FILE.exists():
+            NOTES_FILE.unlink()
+
+
+    reset()
+    first = run_cli("add", "buy milk")
+    first_id = numeric_id(first.stdout)
+    check(
+        "add exits 0 and prints a numeric id",
+        first.returncode == 0 and first_id != "",
+        (first.stdout + first.stderr)[:200],
+    )
+
+    run_cli("add", "walk dog")
+    listing = run_cli("list")
+    check(
+        "list shows both notes",
+        listing.returncode == 0 and "buy milk" in listing.stdout and "walk dog" in listing.stdout,
+        (listing.stdout + listing.stderr)[:200],
+    )
+
+    marked = run_cli("done", first_id) if first_id else None
+    check(
+        "done accepts the id",
+        marked is not None and marked.returncode == 0,
+        "" if marked is None else (marked.stdout + marked.stderr)[:200],
+    )
+
+    listing = run_cli("list")
+    check(
+        "done note stays visible and is marked done",
+        "buy milk" in listing.stdout and "done" in listing.stdout.lower(),
+        listing.stdout[:200],
+    )
+
+    if NOTES_FILE.exists():
+        try:
+            data = json.loads(NOTES_FILE.read_text(encoding="utf-8"))
+            valid = isinstance(data, (list, dict))
+            detail = "" if valid else f"unexpected type {type(data).__name__}"
+        except json.JSONDecodeError as exc:
+            valid, detail = False, str(exc)
+    else:
+        valid, detail = False, "notes.json missing"
+    check("notes.json is valid json", valid, detail)
+
+    reset()
+    after = run_cli("list")
+    check(
+        "list works on fresh state",
+        after.returncode == 0 and "buy milk" not in after.stdout,
+        (after.stdout + after.stderr)[:200],
+    )
+
+    print(f"{6 - len(failures)}/6 checks passed")
+    sys.exit(0 if not failures else 1)
+
+success_criteria:
+  - type: file_exists
+    path: notes.py
+  - type: command_ok
+    command: "{python} acceptance.py"
+  - type: file_unchanged
+    path: acceptance.py
+
+judge_hints:
+  - "done 是标记完成而非删除;add 的输出必须是单独一行的纯数字 id;验收脚本本身不得修改"
+
+reference:
+  notes.py: |
+    """Minimal notes CLI: add / list / done, stored in notes.json."""
+    import json
+    import sys
+    from pathlib import Path
+
+    NOTES_FILE = Path(__file__).resolve().parent / "notes.json"
+
+
+    def load_notes():
+        if NOTES_FILE.exists():
+            return json.loads(NOTES_FILE.read_text(encoding="utf-8"))
+        return []
+
+
+    def save_notes(notes):
+        NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+    def main(argv):
+        notes = load_notes()
+        if not argv:
+            print("usage: notes.py add TEXT | list | done ID")
+            return 1
+        command = argv[0]
+        if command == "add":
+            note_id = max((note["id"] for note in notes), default=0) + 1
+            notes.append({"id": note_id, "text": " ".join(argv[1:]), "done": False})
+            save_notes(notes)
+            print(note_id)
+            return 0
+        if command == "list":
+            for note in notes:
+                mark = "done" if note["done"] else "open"
+                print(f"{note['id']} [{mark}] {note['text']}")
+            return 0
+        if command == "done":
+            target = int(argv[1])
+            for note in notes:
+                if note["id"] == target:
+                    note["done"] = True
+            save_notes(notes)
+            return 0
+        print(f"unknown command: {command}")
+        return 1
+
+
+    if __name__ == "__main__":
+        sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,56 @@
+# S2 —— 简单:写一个函数(种子测试驱动)
+id: S2-implement-function
+tier: simple
+requires_network: false
+timeout_seconds: 300
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  test_text_utils.py 里的测试目前无法运行,因为 text_utils.py 还不存在。
+  请实现 count_vowels 函数(大小写不敏感地统计元音字母 a/e/i/o/u 的个数)使全部测试通过。
+  不要修改测试文件。
+
+setup:
+  test_text_utils.py: |
+    from text_utils import count_vowels
+
+
+    def test_counts_lowercase_vowels():
+        assert count_vowels("hello") == 2
+
+
+    def test_counts_uppercase_vowels():
+        assert count_vowels("AEIOU") == 5
+
+
+    def test_counts_no_vowels():
+        assert count_vowels("xyz") == 0
+
+
+    def test_mixed_case_word():
+        assert count_vowels("Programming") == 3
+
+success_criteria:
+  - type: file_exists
+    path: text_utils.py
+  - type: file_contains
+    path: text_utils.py
+    all_of: ["def count_vowels"]
+  - type: command_ok
+    command: "{python} -m pytest test_text_utils.py -q"
+  - type: file_unchanged
+    path: test_text_utils.py
+
+judge_hints:
+  - "count_vowels 大小写不敏感;'AEIOU' 计 5、'Programming' 计 3(o/a/i)"
+
+reference:
+  text_utils.py: |
+    """Tiny text helpers."""
+
+
+    def count_vowels(text):
+        """Count vowels (a, e, i, o, u) case-insensitively."""
+        return sum(1 for ch in str(text).lower() if ch in "aeiou")

@@ -1,0 +1,101 @@
+# M1 —— 中等:本地搜索 + 写报告(全程离线)
+id: M1-local-search-report
+tier: medium
+requires_network: false
+timeout_seconds: 600
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  shop/ 目录是一个小项目。找出其中所有 TODO 注释,生成 todo_report.md:
+  每条一行,格式为 `- 相对路径:行号: TODO: 注释内容`,路径相对工作区根,
+  并保留原文里的 `TODO:` 前缀(整行逐字复制,不要改写)。
+  不要遗漏,不要虚构不存在的条目,不要修改 shop/ 里的文件。
+
+setup:
+  shop/cart.py: |
+    """Shopping cart primitives."""
+
+
+    class Cart:
+        def __init__(self):
+            self.items = []
+
+        def add(self, item, price):
+            # TODO: validate that price is non-negative
+            self.items.append((item, price))
+
+        def total(self):
+            # TODO: apply volume discounts in total()
+            return sum(price for _, price in self.items)
+  shop/inventory.py: |
+    """Stock keeping."""
+
+
+    class Inventory:
+        def __init__(self):
+            self.stock = {}
+
+        def receive(self, sku, qty):
+            # TODO: guard stock mutations with a lock
+            self.stock[sku] = self.stock.get(sku, 0) + qty
+
+        def close(self):
+            # TODO: persist inventory to disk on close
+            pass
+  shop/receipt.py: |
+    """Receipt rendering."""
+
+
+    def render(lines, total):
+        # TODO: format currency per locale
+        body = "\n".join(lines)
+        return f"{body}\nTOTAL: {total}"
+  shop/main.py: |
+    from cart import Cart
+    from receipt import render
+
+
+    def main():
+        # TODO: add a --verbose flag
+        cart = Cart()
+        cart.add("apple", 1.5)
+        print(render(["apple x1"], cart.total()))
+
+
+    if __name__ == "__main__":
+        main()
+
+success_criteria:
+  - type: file_exists
+    path: todo_report.md
+  - type: file_contains
+    path: todo_report.md
+    regex:
+      - '- shop/cart\.py:\d+: TODO: validate that price is non-negative'
+      - '- shop/cart\.py:\d+: TODO: apply volume discounts in total\(\)'
+      - '- shop/inventory\.py:\d+: TODO: guard stock mutations with a lock'
+      - '- shop/inventory\.py:\d+: TODO: persist inventory to disk on close'
+      - '- shop/receipt\.py:\d+: TODO: format currency per locale'
+      - '- shop/main\.py:\d+: TODO: add a --verbose flag'
+  - type: file_unchanged
+    path: shop/cart.py
+  - type: file_unchanged
+    path: shop/inventory.py
+  - type: file_unchanged
+    path: shop/receipt.py
+  - type: file_unchanged
+    path: shop/main.py
+
+judge_hints:
+  - "恰好 6 条 TODO,分布在 shop/ 的 4 个文件里;行号必须与文件实际行号一致;不得虚构条目"
+
+reference:
+  todo_report.md: |
+    - shop/cart.py:9: TODO: validate that price is non-negative
+    - shop/cart.py:13: TODO: apply volume discounts in total()
+    - shop/inventory.py:9: TODO: guard stock mutations with a lock
+    - shop/inventory.py:13: TODO: persist inventory to disk on close
+    - shop/receipt.py:5: TODO: format currency per locale
+    - shop/main.py:6: TODO: add a --verbose flag

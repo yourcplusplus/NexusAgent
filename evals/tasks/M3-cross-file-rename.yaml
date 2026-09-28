@@ -1,0 +1,122 @@
+# M3 —— 中等:多步修改(跨文件改名)
+id: M3-cross-file-rename
+tier: medium
+requires_network: false
+timeout_seconds: 600
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  test_warehouse.py 引用的是新方法名 net_value,但 warehouse 包里目前叫 total_value。
+  把 warehouse 包里的 total_value 统一改名为 net_value,保持行为不变,让全部测试通过。
+  不要修改测试文件。
+
+setup:
+  warehouse/__init__.py: ""
+  warehouse/models.py: |
+    """Domain models for the warehouse."""
+
+
+    class StockItem:
+        def __init__(self, sku, quantity, unit_price):
+            self.sku = sku
+            self.quantity = quantity
+            self.unit_price = unit_price
+
+        def total_value(self):
+            """Monetary value of the stock on hand."""
+            return self.quantity * self.unit_price
+  warehouse/report.py: |
+    from warehouse.models import StockItem
+
+
+    def highlight(item: StockItem):
+        """Return the display line for one stock item."""
+        value = item.total_value()
+        return f"{item.sku}: {value}"
+  warehouse/main.py: |
+    from warehouse.models import StockItem
+    from warehouse.report import highlight
+
+
+    def main():
+        item = StockItem("A-100", 4, 2.5)
+        print(highlight(item))
+        print(item.total_value())
+
+
+    if __name__ == "__main__":
+        main()
+  test_warehouse.py: |
+    from warehouse.models import StockItem
+    from warehouse.report import highlight
+
+
+    def test_net_value_multiplies_quantity_by_price():
+        item = StockItem("A-100", 4, 2.5)
+        assert item.net_value() == 10.0
+
+
+    def test_highlight_uses_net_value():
+        item = StockItem("B-200", 3, 4.0)
+        assert highlight(item) == "B-200: 12.0"
+
+success_criteria:
+  - type: command_ok
+    command: "{python} -m pytest test_warehouse.py -q"
+  - type: file_not_contains
+    path: warehouse/models.py
+    text: total_value
+  - type: file_not_contains
+    path: warehouse/report.py
+    text: total_value
+  - type: file_not_contains
+    path: warehouse/main.py
+    text: total_value
+  - type: file_contains
+    path: warehouse/models.py
+    all_of: ["def net_value"]
+  - type: file_unchanged
+    path: test_warehouse.py
+  - type: file_unchanged
+    path: warehouse/__init__.py
+
+judge_hints:
+  - "total_value 有 3 处:models.py 的定义、report.py 的调用、main.py 的调用,全部都要改名;行为不得改变;测试文件不得改动"
+
+reference:
+  warehouse/models.py: |
+    """Domain models for the warehouse."""
+
+
+    class StockItem:
+        def __init__(self, sku, quantity, unit_price):
+            self.sku = sku
+            self.quantity = quantity
+            self.unit_price = unit_price
+
+        def net_value(self):
+            """Monetary value of the stock on hand."""
+            return self.quantity * self.unit_price
+  warehouse/report.py: |
+    from warehouse.models import StockItem
+
+
+    def highlight(item: StockItem):
+        """Return the display line for one stock item."""
+        value = item.net_value()
+        return f"{item.sku}: {value}"
+  warehouse/main.py: |
+    from warehouse.models import StockItem
+    from warehouse.report import highlight
+
+
+    def main():
+        item = StockItem("A-100", 4, 2.5)
+        print(highlight(item))
+        print(item.net_value())
+
+
+    if __name__ == "__main__":
+        main()

@@ -1,0 +1,47 @@
+# M2 —— 中等:网络搜索 + 写文件(唯一需要网络的任务)
+# 说明:主题选 walrus operator——内容稳定、不依赖时事,离线也能构造判据。
+id: M2-web-search-write
+tier: medium
+requires_network: true
+timeout_seconds: 600
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  搜索资料,在工作区写一篇 walrus.md 介绍 Python 的海象运算符:
+  它是什么、解决什么问题、给一个可运行的代码示例,文末列出至少 2 个来源链接。
+
+setup: {}
+
+success_criteria:
+  - type: file_exists
+    path: walrus.md
+  - type: file_contains
+    path: walrus.md
+    all_of: [":=", "```"]
+    any_of: ["walrus", "Walrus", "海象"]
+    min_count:
+      http: 2
+
+judge_hints:
+  - "内容需说清 := 的含义与动机(Python 3.8 / PEP 572 引入);代码示例须真实可运行;来源链接须真实,不得编造 URL"
+
+reference:
+  walrus.md: |
+    # Python 海象运算符(walrus operator)
+
+    海象运算符 `:=` 在 Python 3.8(PEP 572)中引入,允许在表达式内部完成赋值,
+    因此可以"边计算边保存",避免同一个表达式算两遍。
+
+    它解决的主要问题是"先赋值、再判断"的重复:
+
+    ```python
+    data = ["x"] * 15
+    if (n := len(data)) > 10:
+        print(f"too long: {n}")
+    ```
+
+    来源:
+    - https://peps.python.org/pep-0572/
+    - https://docs.python.org/3/whatsnew/3.8.html

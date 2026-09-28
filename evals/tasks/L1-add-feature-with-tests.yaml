@@ -1,0 +1,157 @@
+# L1 —— 长链路:探索 + 写代码 + 补测试 + 跑测试
+id: L1-add-feature-with-tests
+tier: long
+requires_network: false
+timeout_seconds: 900
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  给 inventory 包新增功能:Inventory.find(keyword),返回名称中包含关键词
+  (大小写不敏感)的所有 Item 组成的列表。
+  在 test_inventory.py 中补充至少 3 个针对 find 的测试(有命中、无命中、
+  大小写混合三种情形都要覆盖),并让全部测试通过。
+  不要删除或改写已有的测试。
+
+setup:
+  inventory/__init__.py: ""
+  inventory/items.py: |
+    """Inventory domain model."""
+    from dataclasses import dataclass
+
+
+    @dataclass
+    class Item:
+        name: str
+        quantity: int
+
+
+    class Inventory:
+        def __init__(self):
+            self._items = []
+
+        def add(self, name, quantity):
+            self._items.append(Item(name, quantity))
+
+        def remove(self, name):
+            self._items = [item for item in self._items if item.name != name]
+
+        def total_quantity(self):
+            return sum(item.quantity for item in self._items)
+  test_inventory.py: |
+    from inventory.items import Inventory
+
+
+    def test_add_and_total():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.add("nail", 100)
+        assert inv.total_quantity() == 103
+
+
+    def test_remove_drops_all_matches():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.add("nail", 100)
+        inv.remove("hammer")
+        assert inv.total_quantity() == 100
+
+
+    def test_remove_unknown_is_noop():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.remove("saw")
+        assert inv.total_quantity() == 3
+
+success_criteria:
+  - type: command_ok
+    command: "{python} -m pytest test_inventory.py -q"
+  - type: file_contains
+    path: inventory/items.py
+    all_of: ["def find"]
+  - type: file_contains
+    path: test_inventory.py
+    min_count:
+      "def test_find": 3
+  - type: file_contains
+    path: test_inventory.py
+    all_of:
+      - "def test_add_and_total"
+      - "def test_remove_drops_all_matches"
+      - "def test_remove_unknown_is_noop"
+
+judge_hints:
+  - "find 是 Inventory 的方法:大小写不敏感的包含匹配,返回 Item 列表;原有 3 个测试必须保留且通过;新增测试要真的覆盖三种情形,不得写恒真的空测试"
+
+reference:
+  inventory/items.py: |
+    """Inventory domain model."""
+    from dataclasses import dataclass
+
+
+    @dataclass
+    class Item:
+        name: str
+        quantity: int
+
+
+    class Inventory:
+        def __init__(self):
+            self._items = []
+
+        def add(self, name, quantity):
+            self._items.append(Item(name, quantity))
+
+        def remove(self, name):
+            self._items = [item for item in self._items if item.name != name]
+
+        def total_quantity(self):
+            return sum(item.quantity for item in self._items)
+
+        def find(self, keyword):
+            lowered = str(keyword).lower()
+            return [item for item in self._items if lowered in item.name.lower()]
+  test_inventory.py: |
+    from inventory.items import Inventory
+
+
+    def test_add_and_total():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.add("nail", 100)
+        assert inv.total_quantity() == 103
+
+
+    def test_remove_drops_all_matches():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.add("nail", 100)
+        inv.remove("hammer")
+        assert inv.total_quantity() == 100
+
+
+    def test_remove_unknown_is_noop():
+        inv = Inventory()
+        inv.add("hammer", 3)
+        inv.remove("saw")
+        assert inv.total_quantity() == 3
+
+
+    def test_find_matches_substring_case_insensitive():
+        inv = Inventory()
+        inv.add("Claw Hammer", 1)
+        assert [item.name for item in inv.find("hammer")] == ["Claw Hammer"]
+
+
+    def test_find_no_match_returns_empty():
+        inv = Inventory()
+        inv.add("saw", 1)
+        assert inv.find("drill") == []
+
+
+    def test_find_mixed_case_keyword():
+        inv = Inventory()
+        inv.add("Claw Hammer", 1)
+        inv.add("nail", 1)
+        assert [item.name for item in inv.find("HaMm")] == ["Claw Hammer"]

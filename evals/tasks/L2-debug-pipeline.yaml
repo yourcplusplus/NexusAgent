@@ -1,0 +1,133 @@
+# L2 —— 长链路:顺序遮蔽的流水线调试(两个缺陷级联,修好第一个才暴露第二个)
+id: L2-debug-pipeline
+tier: long
+requires_network: false
+timeout_seconds: 900
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  运行 run_pipeline.py,它产出的 result.json 与 expected_result.json 不一致。
+  定位并修复流水线中的缺陷(只允许修改 extract.py、transform.py、load.py),
+  直到 result.json 与 expected_result.json 完全一致。
+
+setup:
+  logs/events.log: |
+    2026-09-27T10:00:00Z alice login 120
+    2026-09-27T10:05:00Z bob purchase 340
+    2026-09-27T10:09:00Z alice purchase 80
+    2026-09-27T10:15:00Z carol login 30
+  extract.py: |
+    """Stage 1: read raw log lines into structured events."""
+
+    LOG_FILE = "logs/events.log"
+
+
+    def parse_events(path=LOG_FILE):
+        events = []
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                fields = line.split(" ")
+                events.append(
+                    {
+                        "user": fields[0],
+                        "action": fields[2],
+                        "seconds": int(fields[3]),
+                    }
+                )
+        return events
+  transform.py: |
+    """Stage 2: aggregate durations."""
+
+
+    def aggregate(events):
+        totals = {}
+        for event in events:
+            user = event["user"]
+            totals[user] = totals.get(user, 0) + event["seconds"]
+        return totals
+  load.py: |
+    """Stage 3: write the aggregated result."""
+    import json
+
+
+    def write_result(totals, path="result.json"):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(totals, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+  run_pipeline.py: |
+    from extract import parse_events
+    from transform import aggregate
+    from load import write_result
+
+
+    def main():
+        events = parse_events()
+        totals = aggregate(events)
+        write_result(totals)
+
+
+    if __name__ == "__main__":
+        main()
+  expected_result.json: |
+    {
+      "alice": 80,
+      "bob": 340
+    }
+
+success_criteria:
+  - type: command_ok
+    command: "{python} run_pipeline.py"
+  - type: file_matches_expected
+    path: result.json
+    expected: expected_result.json
+  - type: file_unchanged
+    path: run_pipeline.py
+  - type: file_unchanged
+    path: expected_result.json
+  - type: file_unchanged
+    path: logs/events.log
+
+judge_hints:
+  - "只许改 extract.py / transform.py / load.py;两个缺陷是级联的:extract 把时间戳当成了 user,transform 少了只统计 purchase 事件的过滤"
+  - "期望语义:按用户汇总 purchase 事件时长(秒),login 不计;alice=80(仅 purchase),bob=340"
+
+reference:
+  extract.py: |
+    """Stage 1: read raw log lines into structured events."""
+
+    LOG_FILE = "logs/events.log"
+
+
+    def parse_events(path=LOG_FILE):
+        events = []
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                fields = line.split(" ")
+                events.append(
+                    {
+                        "user": fields[1],
+                        "action": fields[2],
+                        "seconds": int(fields[3]),
+                    }
+                )
+        return events
+  transform.py: |
+    """Stage 2: aggregate purchase durations per user."""
+
+
+    def aggregate(events):
+        totals = {}
+        for event in events:
+            if event.get("action") != "purchase":
+                continue
+            user = event["user"]
+            totals[user] = totals.get(user, 0) + event["seconds"]
+        return totals

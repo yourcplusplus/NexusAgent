@@ -1,0 +1,32 @@
+# 环境与密钥
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Agent 运行时临时产物
+.nexusagent/
+nexusagent_workspaces/
+*.log
+
+# 评测运行产物
+evals/runs/
+evals/report.md
+
+# 工具同步缓存（保留你原有的）
+.agent-sync/
+.agent-sync-store/
+
+# IDE
+.vscode/
+.idea/
+# ZCode runtime
+.codegraph/
+.zcodeignore

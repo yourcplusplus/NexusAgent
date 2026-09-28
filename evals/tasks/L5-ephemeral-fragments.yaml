@@ -1,0 +1,256 @@
+# L5 —— 长时程:易逝档案碎片重组(转录记忆专用压力任务,加难版)
+#
+# 机制(设计评审定稿 + 加难轮,见对话记录):
+# - 四个 40 字符高熵令牌拆成 160 个单字符真实碎片,外加 20 个交错 CTRL 对照片
+#   (编号逢 9 倍数;误把 CTRL 字符拼进令牌 → 哈希校验失败),共 180 片、18 批。
+# - 每片另带 ~4KB 审计噪声,使 B 组的 FileReadTool 结果 >2KB → Phase 1 落盘产物
+#   + [Artifacts] 指针。180 个产物 > 白名单 LRU(100):早批指针被冲出白名单,
+#   跨压缩恢复必须同时依赖 ①压缩后仍在白名单的近期指针、②rollup 叙事里的指针
+#   (强化后的 prompt 逐字保留)、③`ls .nexusagent/tool-outputs/` 的盘上枚举。
+# - 流程强制"读 10 片 → courier 收走该批(磁盘删除)× 18 批":跨批组装时早批
+#   字符在盘上已不存在。A 组无落盘、无白名单、旧压缩器整表清空 + 2000 字符预截断
+#   → 压缩后结构性失忆(80 片版标定已实证:6 次压缩、3 attempt 全败、四令牌哈希全错)。
+# - verify_patch.py 用 SHA-256(salt|value) 校验;courier 收集状态(18/18)被
+#   verify 强制。泄漏判据:工作区(除 config_patch.py、.nexusagent/、
+#   HISTORY_SUMMARY.md——rollup 叙事的合法载体)不得出现令牌 8 字符窗口,且不得
+#   新建计划外文件。明文 v1 由 setup_script 写到工作区外(../secrets_v1.json)。
+# - env 阈值 5500 经标定;压力路径(memory_under_compression)依赖 attempt-1
+#   有机失败——并行工具调用使图预算是软的,attempt-1 失败无法确定性强迫,
+#   采样口径见 run_eval 报告与 README 已知局限。
+id: L5-ephemeral-fragments
+tier: long
+requires_network: false
+timeout_seconds: 1800
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 5500
+
+instruction: |
+  vault/ 协议任务:一批档案被拆成 180 个碎片文件,fragments/frag_001.txt 到
+  fragments/frag_180.txt。绝大多数碎片的有效字符在其 CHAR: 行;但有 20 个
+  对照片(编号为 9 的倍数,即 frag_009 / frag_018 / ... / frag_180)的有效行
+  是 CTRL: 而不是 CHAR:——对照片不属于任何令牌,读取时跳过它们,但 courier
+  仍要照常收走。
+  四个令牌由【有效字符】(即所有 CHAR: 行的字符)按碎片编号升序拼接后切分:
+  - SEED_TOKEN    = 第 1-40 个有效字符
+  - ENDPOINT_PATH = 第 41-80 个
+  - RETRY_BUDGET  = 第 81-120 个
+  - AUDIT_SALT    = 第 121-160 个
+  流程约束(必须严格遵守,courier 与 verify 会强制校验):
+  1. 每批 10 片(片段编号 1-10 为第 1 批,依此类推,共 18 批):用 FileReadTool
+     读取该批全部 10 个碎片(不要用 bash cat 读碎片),然后运行
+     `python courier.py --batch N` 收走该批。碎片被收走后会从磁盘删除;
+     verify 要求 18 批全部收走。
+  2. 十八批全部读完后,拼出四个令牌,写入 config_patch.py(四个字符串常量,
+     名字为 SEED_TOKEN / ENDPOINT_PATH / RETRY_BUDGET / AUDIT_SALT)。
+  3. 运行 `python verify_patch.py`,直到它通过。
+  4. 不得修改 courier.py 与 verify_patch.py;不得复制或移动碎片文件;不得把
+     令牌字符写入 config_patch.py 之外的任何文件(包括 TODO.md 与 NOTEPAD.md);
+     除 config_patch.py 外不要创建新文件。
+
+setup_script: |
+  import hashlib
+  import json
+  import random
+  from pathlib import Path
+
+  rng = random.Random(20260927)
+  alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+
+  def token():
+      return "".join(rng.choice(alphabet) for _ in range(40))
+
+  names = ("SEED_TOKEN", "ENDPOINT_PATH", "RETRY_BUDGET", "AUDIT_SALT")
+  v1 = {name: token() for name in names}
+  stale = {name: token() for name in names}  # config_patch 的错误初值(与 v1 不同)
+  real_chars = []
+  for name in names:
+      real_chars.extend(v1[name])
+  assert len(real_chars) == 160
+
+  frag_dir = Path("fragments")
+  frag_dir.mkdir(parents=True, exist_ok=True)
+  filler = "audit trail entry: routine scan of the vault perimeter; no anomalies to report this cycle."
+  real_iter = iter(real_chars)
+  ctrl_count = 0
+  for index in range(1, 181):
+      batch = (index - 1) // 10 + 1
+      if index % 9 == 0:
+          marker, char = "CTRL", rng.choice(alphabet)
+          ctrl_count += 1
+      else:
+          marker, char = "CHAR", next(real_iter)
+      lines = [
+          f"# VAULT FRAGMENT {index:03d} (batch {batch})",
+          f"# protocol ref 4.{batch}",
+          f"{marker}: {char}",
+          "",
+      ]
+      for k in range(52):
+          lines.append(f"{filler} [{index:03d}/{k:02d}] " + "x" * rng.randint(2, 9))
+      frag_dir.joinpath(f"frag_{index:03d}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+  assert ctrl_count == 20, ctrl_count
+
+  courier = '''"""Collect processed fragment batches; collected fragments leave the disk."""
+  import argparse
+  import json
+  from pathlib import Path
+
+  STATE = Path(".nexusagent") / "courier_state.json"
+
+
+  def load_state():
+      if STATE.exists():
+          return json.loads(STATE.read_text(encoding="utf-8"))
+      return {"collected": []}
+
+
+  def main():
+      parser = argparse.ArgumentParser()
+      parser.add_argument("--batch", type=int)
+      args = parser.parse_args()
+      state = load_state()
+      collected = state["collected"]
+      if not args.batch:
+          print(json.dumps(state, ensure_ascii=False))
+          return 0
+      if args.batch in collected:
+          print(f"batch {args.batch} already collected")
+          return 0
+      if collected and args.batch != max(collected) + 1:
+          print(f"out-of-order collection: collected={collected}, requested={args.batch}")
+          return 1
+      removed = 0
+      for index in range((args.batch - 1) * 10 + 1, args.batch * 10 + 1):
+          path = Path("fragments") / f"frag_{index:03d}.txt"
+          if path.exists():
+              path.unlink()
+              removed += 1
+      collected.append(args.batch)
+      STATE.parent.mkdir(parents=True, exist_ok=True)
+      STATE.write_text(json.dumps({"collected": collected}, ensure_ascii=False), encoding="utf-8")
+      print(f"batch {args.batch} collected ({removed} fragments removed from disk)")
+      return 0
+
+
+  if __name__ == "__main__":
+      raise SystemExit(main())
+  '''
+  Path("courier.py").write_text(courier, encoding="utf-8")
+
+  def salted(value):
+      return hashlib.sha256(("nexusagent-l5-ephemeral-vault|" + value).encode("utf-8")).hexdigest()
+
+  verifier = '"""Verify the config patch against the sealed vault tokens (hash-checked)."""\n'
+  verifier += "import hashlib\nimport json\nimport sys\nfrom pathlib import Path\n\n"
+  verifier += "SALT = 'nexusagent-l5-ephemeral-vault'\n"
+  verifier += "EXPECTED = {\n"
+  for name in names:
+      verifier += f"    '{name}': '{salted(v1[name])}',\n"
+  verifier += "}\n\n"
+  verifier += '''def salted(value):
+      return hashlib.sha256((SALT + "|" + value).encode("utf-8")).hexdigest()
+
+
+  def main():
+      state_path = Path(".nexusagent") / "courier_state.json"
+      collected = json.loads(state_path.read_text(encoding="utf-8"))["collected"] if state_path.exists() else []
+      if sorted(collected) != list(range(1, 19)):
+          print(f"FAIL courier: expected batches 1-18 collected, got {collected}")
+          return 1
+      try:
+          import config_patch
+      except Exception as exc:
+          print(f"FAIL patch unreadable: {exc}")
+          return 1
+      bad = []
+      for field, expected in EXPECTED.items():
+          value = str(getattr(config_patch, field, ""))
+          if salted(value) != expected:
+              bad.append(field)
+      if bad:
+          print("FAIL mismatch fields: " + ", ".join(bad))
+          print("hint: 封存前的碎片读取留有可回看的记录(见 Artifacts 指针)")
+          return 1
+      print("PASS all four tokens verified")
+      return 0
+
+
+  if __name__ == "__main__":
+      raise SystemExit(main())
+  '''
+  Path("verify_patch.py").write_text(verifier, encoding="utf-8")
+
+  patch_lines = ['"""Config patch (auto-generated from the latest vault snapshot)."""']
+  for name in names:
+      patch_lines.append(f'{name} = "{stale[name]}"')
+  Path("config_patch.py").write_text("\n".join(patch_lines) + "\n", encoding="utf-8")
+
+  Path("../secrets_v1.json").write_text(json.dumps(v1, ensure_ascii=False, indent=2), encoding="utf-8")
+  print("generated 180 fragments (160 real + 20 CTRL), 4 tokens x40, stale patch, verifier hashes")
+
+success_criteria:
+  - type: command_ok
+    command: "{python} verify_patch.py"
+  - type: script_ok
+    label: leak-scan
+    script: |
+      import json
+      from pathlib import Path
+      secrets = json.loads(Path('../secrets_v1.json').read_text(encoding='utf-8'))
+      tokens = [secrets[k] for k in ('SEED_TOKEN', 'ENDPOINT_PATH', 'RETRY_BUDGET', 'AUDIT_SALT')]
+      windows = {tokens[i][j:j+8] for i in range(4) for j in range(33)}
+      allowed_new = {'config_patch.py', 'TODO.md', 'NOTEPAD.md', 'HISTORY_SUMMARY.md'}
+      allowed_base = {'courier.py', 'verify_patch.py', 'config_patch.py'}
+      extra = []
+      for p in Path('.').rglob('*'):
+          if p.is_dir() or '.nexusagent' in p.parts or '__pycache__' in p.parts or '.pytest_cache' in p.parts:
+              continue
+          rel = p.as_posix()
+          if rel.startswith('fragments/'):
+              continue
+          if rel in allowed_new or rel in allowed_base:
+              continue
+          extra.append(rel)
+      assert not extra, f'unexpected files (stash?): {extra[:5]}'
+      for p in Path('.').rglob('*'):
+          if not p.is_file() or '.nexusagent' in p.parts or '__pycache__' in p.parts or '.pytest_cache' in p.parts:
+              continue
+          if p.as_posix() == 'config_patch.py' or p.as_posix() == 'HISTORY_SUMMARY.md':
+              continue
+          text = p.read_text(encoding='utf-8', errors='replace')
+          hit = sorted(w for w in windows if w in text)
+          assert not hit, f'leaked token material in {p.as_posix()}: {hit[:2]}'
+      print('leak scan clean')
+  - type: file_unchanged
+    path: courier.py
+  - type: file_unchanged
+    path: verify_patch.py
+
+judge_hints:
+  - "180 片中 20 个对照片(编号 9 的倍数,CTRL: 行)必须跳过;160 个有效字符按编号升序拼成 4x40 的四个令牌"
+  - "流程要求每批 10 片读完即 courier 收走(共 18 批);跨批重组时早批碎片已从磁盘删除"
+  - "config_patch.py 是唯一允许携带令牌的文件;复制碎片、写 TODO/NOTEPAD、新建计划外文件都违反协议"
+
+reference_script: |
+  import json
+  import subprocess
+  import sys
+  from pathlib import Path
+
+  chars = []
+  for index in range(1, 181):
+      text = Path(f"fragments/frag_{index:03d}.txt").read_text(encoding="utf-8")
+      for line in text.splitlines():
+          if line.startswith("CHAR: "):
+              chars.append(line[len("CHAR: "):].strip())
+              break
+  assert len(chars) == 160, f"expected 160 valid chars, got {len(chars)}"
+  names = ("SEED_TOKEN", "ENDPOINT_PATH", "RETRY_BUDGET", "AUDIT_SALT")
+  lines = ['"""Config patch (reference solution)."""']
+  for i, name in enumerate(names):
+      lines.append(f'{name} = "{"".join(chars[i * 40:(i + 1) * 40])}"')
+  Path("config_patch.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+  for batch in range(1, 19):
+      subprocess.run([sys.executable, "courier.py", "--batch", str(batch)], check=True, capture_output=True)
+  print("reference patch written, all 18 batches collected")

@@ -1,0 +1,47 @@
+# S1 —— 简单:单步修语法错误
+id: S1-fix-syntax-error
+tier: simple
+requires_network: false
+timeout_seconds: 300
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 10000
+
+instruction: |
+  运行 calculator.py 会报错。修复它,让程序能正常运行,不要改变程序的预期行为。
+
+setup:
+  calculator.py: |
+    def add(a, b):
+        return a + b
+
+
+    def multiply(a, b)
+        return a * b
+
+
+    if __name__ == "__main__":
+        print(add(2, 3), multiply(2, 3))
+
+success_criteria:
+  - type: file_exists
+    path: calculator.py
+  - type: command_ok
+    command: "{python} calculator.py"
+    stdout_contains: "5 6"
+
+judge_hints:
+  - "原程序预期打印 '5 6'(add(2,3) 与 multiply(2,3) 的结果);修复不得改变程序行为"
+
+reference:
+  calculator.py: |
+    def add(a, b):
+        return a + b
+
+
+    def multiply(a, b):
+        return a * b
+
+
+    if __name__ == "__main__":
+        print(add(2, 3), multiply(2, 3))

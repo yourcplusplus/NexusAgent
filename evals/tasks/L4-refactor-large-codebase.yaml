@@ -1,0 +1,184 @@
+# L4 —— 长时程:大语料跨文件重命名(专用触发上下文压缩)
+#
+# 设计要点:
+# - 语料 5000+ 行、约 45 个模块,`fetch_data` 有 1 处定义 + 130+ 处出现;实测一个
+#   高效 Agent 会用单条 `sed -i` 完成批量改名(见 run_eval 报告),所以本任务的作用
+#   不是"逼出大转录",而是当压缩阈值被压低时的重负载样本。
+# - `env.NEXUS_CONTEXT_TOKEN_LIMIT=7000`:刻意压低阈值让 A/B 两组都必然触发压缩,
+#   对比的才是"压缩时白名单是否存活 + 成功率是否保持"。阈值必须压低的原因:
+#   Phase 1 的落盘把单轮工具结果压到 ~200-500 tokens,60k/40万 这类阈值在本仓库
+#   任何任务上都不可达(用户已确认此口径)。
+#   取 5500:L4 的 Agent 把工作集中做在 planner 内的一次 codeAgent 调用里,所以
+#   压缩通常落在"verifier 之后、final 之前"那次 monitor 上——而那时已经没有后续
+#   LLM 节点,"压缩后白名单是否存活"就无从验证。实测首次 monitor 值 5,930/6,851/
+#   7,702,取 5500 落在其下方 → 压缩发生在首次 monitor(verifier 之前),后续 verifier
+#   会重建并注入白名单,证据才成立。载荷底噪约 4.3k,压缩时窗口仍有可逐出内容。
+# - 判据全部确定性:包内不得残留旧名、新调用点数 ≥ 40、测试全绿、测试文件未被改动。
+id: L4-refactor-large-codebase
+tier: long
+requires_network: false
+timeout_seconds: 1800
+max_attempts: 3
+env:
+  NEXUS_CONTEXT_TOKEN_LIMIT: 5500
+
+instruction: |
+  这个仓库里有一个示例数据管道包 pipeline/。团队决定弃用旧 API 名 fetch_data,
+  统一改名为 load_data。请完成这次重命名:
+  - 覆盖包内全部出现位置:定义处、每个模块的 import、以及所有调用点;
+  - 重命名后行为必须保持不变(函数签名与返回值语义都不变);
+  - 让仓库里的测试全部通过;
+  - 不要修改测试文件,也不要改动 pipeline/ 之外的文件。
+
+setup_script: |
+  import random
+  from pathlib import Path
+
+  rng = random.Random(20260927)
+  package = Path("pipeline")
+  package.mkdir(parents=True, exist_ok=True)
+  package.joinpath("__init__.py").write_text('"""Example data pipeline package."""\n', encoding="utf-8")
+  package.joinpath("core.py").write_text(
+      '''"""Core data access shared by every pipeline stage."""
+
+  DEFAULT_LIMIT = 3
+
+
+  def fetch_data(source, limit=None):
+      """Read rows for one source.
+
+      This is the legacy name; callers across the package use it.
+      """
+      effective = DEFAULT_LIMIT if limit is None else int(limit)
+      return {"source": str(source), "rows": [index + 1 for index in range(effective)]}
+
+
+  def normalise(records):
+      """Coerce a row sequence into plain ints."""
+      return [int(record) for record in records]
+  ''',
+      encoding="utf-8",
+  )
+
+  STAGE_COUNT = 44
+  for index in range(1, STAGE_COUNT + 1):
+      blocks = [
+          f'"""Stage {index:02d} of the example pipeline."""',
+          "",
+          "from pipeline.core import fetch_data",
+          "",
+      ]
+      # 每个模块 12 个确定性小工具函数,把模块撑到 ~110 行,并让语料读起来像真代码
+      for helper in range(1, 13):
+          span = 10 * helper + index
+          blocks.extend(
+              [
+                  f"def clamp_{index:02d}_{helper:02d}(value, low=0, high={span}):",
+                  f'    """Clamp one value into [low, {span}]."""',
+                  "    if value < low:",
+                  "        return low",
+                  "    if value > high:",
+                  "        return high",
+                  "    return value",
+                  "",
+              ]
+          )
+      blocks.extend(
+          [
+              f"def scale_{index:02d}(records, factor={index % 7 + 2}):",
+              '    """Scale every record by a constant factor."""',
+              "    return [record * factor for record in records]",
+              "",
+              f"def validate_{index:02d}(records):",
+              '    """Reject non-integer or negative rows."""',
+              "    return all(isinstance(record, int) and record >= 0 for record in records)",
+              "",
+              f'def run_stage_{index:02d}(source="source_{index:02d}", limit={index % 5 + 2}):',
+              '    """Fetch and transform one batch for this stage."""',
+              "    payload = fetch_data(source, limit=limit)",
+              f"    rows = scale_{index:02d}(payload[\"rows\"])",
+              f"    if not validate_{index:02d}(rows):",
+              f'        raise ValueError("invalid rows in stage {index:02d}")',
+              '    return {"source": payload["source"], "rows": rows, "checksum": sum(rows)}',
+              "",
+              f'def audit_stage_{index:02d}(source="audit_{index:02d}"):',
+              '    """Second call site: audit reads the same source again."""',
+              "    payload = fetch_data(source, limit=1)",
+              f'    rows = clamp_{index:02d}_01(payload["rows"][0]) if payload["rows"] else 0',
+              '    return {"source": payload["source"], "head": rows, "count": len(payload["rows"])}',
+              "",
+          ]
+      )
+      package.joinpath(f"stage_{index:02d}.py").write_text("\n".join(blocks), encoding="utf-8")
+
+  Path("test_pipeline.py").write_text(
+      '''"""Behavioural tests for the example pipeline package."""
+  import importlib
+
+  from pipeline.core import load_data
+
+
+  def test_load_data_returns_requested_rows():
+      payload = load_data("orders", limit=4)
+      assert payload["source"] == "orders"
+      assert payload["rows"] == [1, 2, 3, 4]
+
+
+  def test_load_data_default_limit():
+      assert load_data("orders")["rows"] == [1, 2, 3]
+
+
+  def test_every_stage_runs():
+      for index in range(1, 45):
+          module = importlib.import_module(f"pipeline.stage_{index:02d}")
+          result = getattr(module, f"run_stage_{index:02d}")()
+          assert result["rows"]
+          assert result["checksum"] > 0
+
+
+  def test_audit_stage_reads_single_row():
+      module = importlib.import_module("pipeline.stage_07")
+      assert module.audit_stage_07()["count"] == 1
+
+
+  def test_no_legacy_name_remains_in_package():
+      import pathlib
+
+      for path in pathlib.Path("pipeline").rglob("*.py"):
+          assert "fetch_data" not in path.read_text(encoding="utf-8"), path.as_posix()
+  ''',
+      encoding="utf-8",
+  )
+  total = sum(1 for path in package.rglob("*.py") for _ in path.read_text(encoding="utf-8").splitlines())
+  print(f"generated {STAGE_COUNT} stages, {total} lines")
+
+success_criteria:
+  - type: file_exists
+    path: pipeline/core.py
+  - type: command_ok
+    command: >-
+      {python} -c "import pathlib;
+      files = sorted(pathlib.Path('pipeline').rglob('*.py'));
+      legacy = [p.as_posix() for p in files if 'fetch_data' in p.read_text(encoding='utf-8')];
+      assert not legacy, f'legacy name still present in: {legacy[:5]}';
+      calls = sum(p.read_text(encoding='utf-8').count('load_data(') for p in files);
+      assert calls >= 40, f'only {calls} load_data call sites';
+      print(f'renamed ok: {len(files)} files, {calls} call sites')"
+  - type: command_ok
+    command: "{python} -m pytest test_pipeline.py -q"
+  - type: file_unchanged
+    path: test_pipeline.py
+
+judge_hints:
+  - "fetch_data 的 1 处定义在 pipeline/core.py,另有 44 个模块各含 1 处 import 与 2 处调用(共 132+ 处);重命名必须覆盖定义、导入与全部调用点"
+  - "签名与返回值语义不得改变(limit 语义、rows 从 1 开始、DEFAULT_LIMIT=3)"
+  - "测试文件 test_pipeline.py 不得改动;pipeline/ 之外不得新增或修改文件"
+
+reference_script: |
+  from pathlib import Path
+
+  for path in sorted(Path("pipeline").rglob("*.py")):
+      text = path.read_text(encoding="utf-8")
+      if "fetch_data" in text:
+          path.write_text(text.replace("fetch_data", "load_data"), encoding="utf-8")
+  print("reference rename applied")

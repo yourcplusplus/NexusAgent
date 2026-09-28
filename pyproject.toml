@@ -1,0 +1,49 @@
+[project]
+name = "nexusagent"
+version = "0.1.0"
+description = "A teaching-first mini CodeAgent built from ToolCall to Claw."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langchain>=1.2.15",
+    "langchain-openai>=1.1.13",
+    "langgraph>=1.1.6",
+    "pillow>=11.0.0",
+    "python-dotenv>=1.1.1",
+    "pyyaml>=6.0.3",
+    "tavily-python>=0.7.24",
+    "tenacity>=9.0",
+    "textual>=8.2.4",
+    "typer>=0.16.0",
+]
+
+[project.scripts]
+nexusagent = "nexusagent.cli.app:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-p no:launch_testing -p no:launch_ros"
+# 排除运行时产物,否则它们会被递归收集成"项目测试":评测工作区里含种子 test_*.py
+# (evals/runs/.../workspace/),Agent 工作区同理(.nexusagent/workspaces/)——那些
+# 文件的通过与否取决于某次任务跑成什么样,不该影响本仓库的测试结果。
+# norecursedirs 会覆盖 pytest 默认值,故把默认项(见 pytest 文档)一并保留。
+norecursedirs = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "venv",
+    "{arch}",
+    "evals/runs",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
